@@ -12,13 +12,13 @@ static void MarkAllROSObjectsAsDisconnected()
 	{
 		UTopic* Topic = *It;
 
-		Topic->MarkAsDisconnected();  
+		Topic->MarkAsDisconnected();
 	}
 	for (TObjectIterator<UService> It; It; ++It)
 	{
 		UService* Service = *It;
 
-		Service->MarkAsDisconnected();   
+		Service->MarkAsDisconnected();
 	}
 }
 
@@ -26,7 +26,7 @@ void UROSIntegrationGameInstance::Init()
 {
 	if (bConnectToROS)
 	{
-		bool resLock = initMutex_.TryLock(); 
+		bool resLock = initMutex_.TryLock();
 		if (!resLock)
 		{
 			UE_LOG(LogROS, Display, TEXT("UROSIntegrationGameInstance::Init() - already connection to ROS bridge!"));
@@ -46,16 +46,16 @@ void UROSIntegrationGameInstance::Init()
 			oldRosCore->ConditionalBeginDestroy();
 		}
 
-		ROSIntegrationCore = NewObject<UROSIntegrationCore>(UROSIntegrationCore::StaticClass()); // ORIGINAL 
-		bIsConnected = ROSIntegrationCore->Init(ROSBridgeServerHost, ROSBridgeServerPort);
+		ROSIntegrationCore = NewObject<UROSIntegrationCore>(UROSIntegrationCore::StaticClass()); // ORIGINAL
+		ROSIntegrationCore->Init(ROSBridgeServerHost, ROSBridgeServerPort, true);
 
 		if (!bTimerSet)
 		{
-			bTimerSet = true; 
+			bTimerSet = true;
 			GetTimerManager().SetTimer(TimerHandle_CheckHealth, this, &UROSIntegrationGameInstance::CheckROSBridgeHealth, 1.0f, true, 5.0f);
 		}
 
-		if (bIsConnected)
+		if (IsConnected())
 		{
 			UWorld* CurrentWorld = GetWorld();
 			if (CurrentWorld)
@@ -94,22 +94,21 @@ void UROSIntegrationGameInstance::Init()
 	}
 }
 
+bool UROSIntegrationGameInstance::IsConnected()
+{
+	return ROSIntegrationCore->IsHealthy();
+}
+
 void UROSIntegrationGameInstance::CheckROSBridgeHealth()
 {
-	if (!bCheckHealth) return; 
+	if (!bCheckHealth) return;
 
-	if (bIsConnected && ROSIntegrationCore->IsHealthy())
+	if (ROSIntegrationCore->IsHealthy())
 	{
 		return;
 	}
 
-	if (bIsConnected)
-	{
-		UE_LOG(LogROS, Error, TEXT("Connection to rosbridge %s:%u was interrupted."), *ROSBridgeServerHost, ROSBridgeServerPort);
-	}
-
 	// reconnect again
-	bIsConnected = false;
 	bReconnect = true;
 	Init();
 	bReconnect = false;
@@ -117,8 +116,9 @@ void UROSIntegrationGameInstance::CheckROSBridgeHealth()
 	// tell everyone (Topics, Services, etc.) they lost connection and should stop any interaction with ROS for now.
 	MarkAllROSObjectsAsDisconnected();
 
-	if (!bIsConnected)
+	if (!ROSIntegrationCore->IsHealthy())
 	{
+		UE_LOG(LogROS, Error, TEXT("Connection to rosbridge %s:%u was interrupted."), *ROSBridgeServerHost, ROSBridgeServerPort);
 		return; // Let timer call this method again to retry connection attempt
 	}
 
@@ -131,7 +131,6 @@ void UROSIntegrationGameInstance::CheckROSBridgeHealth()
 			bool success = Topic->Reconnect(ROSIntegrationCore);
 			if (!success)
 			{
-				bIsConnected = false;
 				UE_LOG(LogROS, Error, TEXT("Unable to re-establish topic %s."), *Topic->GetDetailedInfo());
 			}
 		}
@@ -142,7 +141,6 @@ void UROSIntegrationGameInstance::CheckROSBridgeHealth()
 			bool success = Service->Reconnect(ROSIntegrationCore);
 			if (!success)
 			{
-				bIsConnected = false;
 				UE_LOG(LogROS, Error, TEXT("Unable to re-establish service %s."), *Service->GetDetailedInfo());
 			}
 		}
@@ -173,18 +171,18 @@ void UROSIntegrationGameInstance::Shutdown()
 void UROSIntegrationGameInstance::BeginDestroy()
 {
 	// tell everyone (Topics, Services, etc.) they should stop any interaction with ROS.
-	if (bConnectToROS) 
+	if (bConnectToROS)
 	{
 		UE_LOG(LogROS, Display, TEXT("ROS Game Instance - begin destroy - start"));
 
 		//MarkAllROSObjectsAsDisconnected();  // moved in UROSIntegrationGameInstance::Shutdown()
 
 		//ROSIntegrationCore->ConditionalBeginDestroy();
-		//ROSIntegrationCore = nullptr; 
+		//ROSIntegrationCore = nullptr;
 
-		//ClockTopic->ConditionalBeginDestroy(); 
-		
-		//if (GetWorld()) GetWorld()->ForceGarbageCollection(true);  
+		//ClockTopic->ConditionalBeginDestroy();
+
+		//if (GetWorld()) GetWorld()->ForceGarbageCollection(true);
 	}
 
 	Super::BeginDestroy();
@@ -194,7 +192,7 @@ void UROSIntegrationGameInstance::BeginDestroy()
 
 #if ENGINE_MINOR_VERSION > 23
 void UROSIntegrationGameInstance::OnWorldTickStart(UWorld * World, ELevelTick TickType, float DeltaTime)
-#else 
+#else
 void UROSIntegrationGameInstance::OnWorldTickStart(ELevelTick TickType, float DeltaTime)
 #endif
 {
@@ -227,4 +225,3 @@ void UROSIntegrationGameInstance::OnWorldTickStart(ELevelTick TickType, float De
 		ClockTopic->Publish(ClockMessage);
 	}
 }
-

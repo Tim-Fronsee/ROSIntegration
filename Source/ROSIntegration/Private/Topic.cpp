@@ -14,22 +14,16 @@ class UTopic::Impl {
 	// hidden implementation details
 public:
 	Impl()
-	: _Ric(nullptr)
-	, _ROSTopic(nullptr)
+	: _ROSTopic(nullptr)
 	, _Converter(nullptr)
 	{
 	}
 
 	~Impl() {
-
-		if (_Callback && _Ric) {
-			Unsubscribe();
-		}
-
+		if (_Callback) Unsubscribe();
 		if(_ROSTopic) delete _ROSTopic;
 	}
 
-	UROSIntegrationCore* _Ric = nullptr;
 	FString _Topic;
 	FString _MessageType;
 	int32 _QueueSize;
@@ -99,18 +93,18 @@ public:
 	bool Publish(TSharedPtr<FROSBaseMsg> msg)
 	{
 		bson_t *bson_message = nullptr;
-
-		if (ConvertMessage(msg, &bson_message)) {
+		if (_ROSTopic && ConvertMessage(msg, &bson_message)) {
 			return _ROSTopic->Publish(bson_message);
-			//bson_destroy(bson_message); // Not necessary, since bson memory will be freed in the rosbridge core code
 		}
-		else {
-			UE_LOG(LogROS, Error, TEXT("Failed to ConvertMessage in UTopic::Publish()"));
-			return false;
+		else if (_ROSTopic)
+		{
+			UE_LOG(LogROS, Error, TEXT("[Topic]: Failed to ConvertMessage in Publish()"));
 		}
+		else UE_LOG(LogROS, Error, TEXT("[Topic]: Internal Topic is null."));
+		return false;
 	}
 
-	void Init(UROSIntegrationCore *Ric, const FString& Topic, const FString& MessageType, int32 QueueSize)
+	void Init(rosbridge2cpp::ROSBridge &Ros, const FString& Topic, const FString& MessageType, int32 QueueSize)
 	{
 		// Construct static ConverterMap
 		if (TypeConverterMap.Num() == 0)
@@ -128,7 +122,6 @@ public:
 			}
 		}
 
-		_Ric = Ric;
 		_Topic = Topic;
 		_MessageType = MessageType;
 		_QueueSize = QueueSize;
@@ -137,16 +130,16 @@ public:
 		if (!Converter)
 		{
 			UE_LOG(LogROS,
-			       Error, 
+			       Error,
 			       TEXT("MessageType [%s] for Topic [%s] "
-				    "is unknown. Message ignored."), 
-			       *MessageType, 
+				    "is unknown. Message ignored."),
+			       *MessageType,
 			       *Topic);
 			return;
 		}
 		_Converter = *Converter;
 
-		_ROSTopic = new rosbridge2cpp::ROSTopic(Ric->_Implementation->Get()->_Ros, TCHAR_TO_UTF8(*Topic), TCHAR_TO_UTF8(*MessageType), QueueSize);
+		_ROSTopic = new rosbridge2cpp::ROSTopic(Ros, TCHAR_TO_UTF8(*Topic), TCHAR_TO_UTF8(*MessageType), QueueSize);
 	}
 
 	void MessageCallback(const ROSBridgePublishMsg &message)
@@ -168,7 +161,7 @@ UTopic::UTopic(const FObjectInitializer& ObjectInitializer)
 , _SelfPtr(this, TDeleterNot())
 , _Implementation(new UTopic::Impl())
 {
-	_State.Connected = true;
+	_State.Connected = false;
 	_State.Advertised = false;
 	_State.Subscribed = false;
 	_State.Blueprint = false;
@@ -188,12 +181,6 @@ void UTopic::PostInitProperties()
 }
 
 void UTopic::BeginDestroy() {
-
-	if (_Implementation && (!_State.Connected || !_ROSIntegrationCore || _ROSIntegrationCore->HasAnyFlags(EObjectFlags::RF_BeginDestroyed)))
-	{
-		// prevent any interaction with ROS during destruction
-		_Implementation->_Ric = nullptr;
-	}
 	_State.Connected = false;
 
 	if(_Implementation) delete _Implementation;
@@ -230,13 +217,14 @@ bool UTopic::Unadvertise()
 
 bool UTopic::Publish(TSharedPtr<FROSBaseMsg> msg)
 {
-	return _State.Connected && _Implementation->Publish(msg);
+	return _State.Connected && _State.Advertised && _Implementation->Publish(msg);
 }
 
 void UTopic::Init(UROSIntegrationCore *Ric, FString Topic, FString MessageType, int32 QueueSize)
 {
 	_ROSIntegrationCore = Ric;
-	_Implementation->Init(Ric, Topic, MessageType, QueueSize);
+	_Implementation->Init(*Ric->_Ros, Topic, MessageType, QueueSize);
+	_State.Connected = true;
 }
 
 void UTopic::MarkAsDisconnected()
@@ -251,7 +239,7 @@ bool UTopic::Reconnect(UROSIntegrationCore* ROSIntegrationCore)
 
 	Impl* oldImplementation = _Implementation;
 	_Implementation = new UTopic::Impl();
-	_Implementation->Init(ROSIntegrationCore, oldImplementation->_Topic, oldImplementation->_MessageType, oldImplementation->_QueueSize);
+	_Implementation->Init(*ROSIntegrationCore->_Ros, oldImplementation->_Topic, oldImplementation->_MessageType, oldImplementation->_QueueSize);
 
 	_State.Connected = true;
 	if (_State.Subscribed)
@@ -266,13 +254,12 @@ bool UTopic::Reconnect(UROSIntegrationCore* ROSIntegrationCore)
 
 	if (oldImplementation)
 	{
-		oldImplementation->_Ric = nullptr; // prevent old topic from unsubscribing using the broken connection
 		delete oldImplementation;
 	}
 	return success;
 }
 
-bool UTopic::IsAdvertising() 
+bool UTopic::IsAdvertising()
 {
 	return _State.Advertised;
 }

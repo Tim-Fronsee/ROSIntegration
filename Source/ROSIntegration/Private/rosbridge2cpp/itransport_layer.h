@@ -15,11 +15,8 @@ namespace rosbridge2cpp {
 	public:
 		enum TransportMode { JSON, BSON };
 
-		// Initialize the TransportLayer by connecting to the given IP and port
-		// The implementing class should have an active connection to IP:port
-		// when the method has been executed completly.
-		// Returns true if the connection has been successfully.
-		virtual bool Init(std::string ip_addr, int port) = 0;
+		// Status of the transport layer's socket connection & rx thread.
+		virtual bool IsHealthy() const;
 
 		// Send a string over the underlying transport mechanism to the rosbridge server
 		virtual bool SendMessage(std::string data) = 0;

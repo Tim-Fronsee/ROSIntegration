@@ -31,9 +31,6 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "ROS")
 	bool bConnectToROS = true;
 
-	UPROPERTY(BlueprintReadOnly, Category = "ROS")
-	bool bIsConnected = false;
-
 	UPROPERTY(EditAnywhere, Category = "ROS")
 	bool bSimulateTime = true;
 
@@ -46,12 +43,15 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ROS")
 	bool bCheckHealth = true;
 
+	UFUNCTION(BlueprintCallable, Category = "ROS")
+	bool IsConnected();
+
 protected:
 	void CheckROSBridgeHealth();
 
 #if ENGINE_MINOR_VERSION > 23
 	void OnWorldTickStart(UWorld * World, ELevelTick TickType, float DeltaTime);
-#else 
+#else
 	void OnWorldTickStart(ELevelTick TickType, float DeltaTime);
 #endif
 
@@ -78,4 +78,3 @@ public:
 	~FLockGuard() { lockable_->Unlock(); }
 };
 typedef FLockGuard<FCriticalSection> FLocker;
-

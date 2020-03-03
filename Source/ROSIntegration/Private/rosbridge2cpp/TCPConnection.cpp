@@ -8,37 +8,18 @@
 #include <Serialization/ArrayReader.h>
 #include <SocketSubsystem.h>
 
-bool TCPConnection::Init(std::string ip_addr, int port)
+TCPConnection::TCPConnection(FString ip_addr, int port, bool bson_only) :
+_ip_addr(ip_addr), _port(port), bson_mode(bson_only), running(true)
 {
-	FString address = FString(ip_addr.c_str());
-	int32 remote_port = port;
-	FIPv4Address ip;
-	FIPv4Address::Parse(address, ip);
-
-	auto addr = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->CreateInternetAddr();
-	bool ipValid = false;
-	addr->SetIp(*address, ipValid);
-	addr->SetPort(remote_port);
-
-	if (!ipValid && !addr->IsValid())
-	{
-		UE_LOG(LogROS, Warning, 
-			TEXT("[TCP]: IP address %s:%d is invalid."), *address, remote_port);
-		return false;
-	}
 	_sock = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->CreateSocket(
 		NAME_Stream, TEXT("Rosbridge TCP client"), false);
+	Thread = FRunnableThread::Create(this, TEXT("TCP Thread"), 0, TPri_BelowNormal);
+}
 
-	if (!_sock->Connect(*addr)) return false;
-
-	// Setting up the receiver thread
-	UE_LOG(LogROS, Display, TEXT("[TCP]: Setting up receiver thread ..."));
-
-	run_receiver_thread = true;
-	receiverThread = std::thread(&TCPConnection::ReceiverThreadFunction, this);
-	receiverThreadSetUp = true;
-
-	return true;
+TCPConnection::~TCPConnection()
+{
+	ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(_sock);
+	delete Thread;
 }
 
 bool TCPConnection::SendMessage(std::string data)
@@ -49,58 +30,40 @@ bool TCPConnection::SendMessage(std::string data)
 	// TODO check proper casting
 
 	// TODO check errors on send
-	if (_sock) {
+	if (IsHealthy()) {
 		_sock->Send(byte_msg, data.length(), bytes_sent);
-		UE_LOG(LogROS, VeryVerbose, 
+		UE_LOG(LogROS, VeryVerbose,
 			TEXT("[TCP]: Send data: %s"), *FString(UTF8_TO_TCHAR(data.c_str())));
+		return true;
 	}
-	else UE_LOG(LogROS, Warning, TEXT("[TCP]: Tried to send on null socket"))
-	return true;
+	return false;
 }
 
 bool TCPConnection::SendMessage(const uint8_t *data, unsigned int length)
 {
-	// Simple checksum
-	//uint16_t checksum = Fletcher16(data, length);
-
-	int32 bytes_sent = 0;
-	unsigned int total_bytes_to_send = length;
-	int32 num_tries = 0;
-	while (_sock && total_bytes_to_send > 0 && num_tries < 3)
+	if (IsHealthy())
 	{
-		bool SendResult = _sock->Send(data, total_bytes_to_send, bytes_sent);
+		int32 bytes_sent = 0;
+		unsigned int total_bytes_to_send = length;
+		int32 num_tries = 0;
+		while (total_bytes_to_send > 0 && num_tries < 3)
+		{
+			bool SendResult = 0;
+			if (_sock) SendResult = _sock->Send(data, total_bytes_to_send, bytes_sent);
+			else return SendResult;
 
-		if (SendResult)
-		{
-			data += bytes_sent;
-		}
-		else
-		{
-			++num_tries;
+			if (SendResult) data += bytes_sent;
+			else ++num_tries;
+
+			total_bytes_to_send -= bytes_sent;
 		}
 
-		total_bytes_to_send -= bytes_sent;
+		return total_bytes_to_send == 0;
 	}
-
-	return total_bytes_to_send == 0;
+	return false;
 }
 
-uint16_t TCPConnection::Fletcher16( const uint8_t *data, int count )
-{
-	uint16_t sum1 = 0;
-	uint16_t sum2 = 0;
-	int index;
-
-	for (index = 0; index < count; ++index)
-	{
-		sum1 = (sum1 + data[index]) % 255;
-		sum2 = (sum2 + sum1) % 255;
-	}
-
-	return (sum2 << 8) | sum1;
-}
-
-int TCPConnection::ReceiverThreadFunction()
+uint32 TCPConnection::Run()
 {
 	TArray<uint8> binary_buffer;
 	uint32_t buffer_size = 10 * 1024 * 1024;
@@ -108,30 +71,41 @@ int TCPConnection::ReceiverThreadFunction()
 	bool bson_state_read_length = true; // indicate that the receiver shall only get 4 bytes to start with
 	int32_t bson_msg_length = 0;
 	int32_t bson_msg_length_read = 0;
-	int return_value = 0;
 
-	while (_sock && run_receiver_thread) {
+	auto addr = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->CreateInternetAddr();
+	bool valid;
+	addr->SetIp(*_ip_addr, valid);
+	addr->SetPort(_port);
 
+	if (!valid || !addr->IsValid())
+	{
+		UE_LOG(LogROS, Warning,	TEXT("[TCP]: IP address %s:%d is invalid."), *_ip_addr, _port);
+		return 1;
+	}
+
+	UE_LOG(LogROS, Display, TEXT("[TCP]: Connecting..."));
+
+	// Needs to be inside of Run since this may hang.
+	if (!_sock->Connect(*addr)) return 2;
+
+	// Setting up the receiver thread
+	UE_LOG(LogROS, Display, TEXT("[TCP]: Rx Start"));
+
+	while (running) {
 		ESocketConnectionState ConnectionState = _sock->GetConnectionState();
 		if (ConnectionState != ESocketConnectionState::SCS_Connected) {
-			if (ConnectionState == SCS_NotConnected) {
-				std::this_thread::sleep_for(std::chrono::milliseconds(500));
-			} else {
-				UE_LOG(LogROS, Error, TEXT("[TCP]: Error on connection"));
-				ReportError(rosbridge2cpp::TransportError::R2C_SOCKET_ERROR);
-				run_receiver_thread = false;
-				return_value = 2; // error while receiving from socket
-				continue;
-			}
+			UE_LOG(LogROS, Error, TEXT("[TCP]: Error on connection"));
+			ReportError(rosbridge2cpp::TransportError::R2C_SOCKET_ERROR);
+			return 3;
 		}
 
-		const FTimespan OneSecond(10 * 1000 * 1000);
+		const FTimespan OneSecond = FTimespan::FromSeconds(1.0);
 		if (!_sock->Wait(ESocketWaitConditions::WaitForRead, OneSecond))
 		{
 			continue; // check if any errors occured
 		}
 
-		if (bson_only_mode_) {
+		if (bson_mode) {
 			if (bson_state_read_length) {
 				bson_msg_length_read = 0;
 				binary_buffer.SetNumUninitialized(4, false);
@@ -157,7 +131,7 @@ int TCPConnection::ReceiverThreadFunction()
 					}
 				} else {
 					UE_LOG(LogROS, Error, TEXT("[TCP]: Failed to recv(); Closing receiver thread."));
-					run_receiver_thread = false;
+					return 4;
 				}
 			} else {
 				// Message retrieval mode
@@ -173,15 +147,13 @@ int TCPConnection::ReceiverThreadFunction()
 							UE_LOG(LogROS, Error, TEXT("[TCP]: Error on BSON parse - Ignoring message"));
 							continue;
 						}
-						if (incoming_message_callback_bson_) {
-							incoming_message_callback_bson_(b);
-						}
-					} else {
+						if (incoming_message_callback_bson_) incoming_message_callback_bson_(b);
+					}
+					else {
 						UE_LOG(LogROS, VeryVerbose, TEXT("[TCP]: Binary buffer num is: %d"), binary_buffer.Num());
 					}
-				} else {
-					UE_LOG(LogROS, Error, TEXT("[TCP]: Failed to recv()"));
 				}
+				else UE_LOG(LogROS, Error, TEXT("[TCP]: Failed to recv()"));
 			}
 		}
 		else {
@@ -207,36 +179,43 @@ int TCPConnection::ReceiverThreadFunction()
 
 					delete[] dest;
 				}
-				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+				FPlatformProcess::Sleep(1);
 			}
-			if (result.Len() == 0) {
-				continue;
-			}
+			if (result.Len() == 0) continue;
 
 			// TODO catch parse error properly
 			// auto j = json::parse(received_data);
 			json j;
 			j.Parse(TCHAR_TO_UTF8(*result));
 
-			if (_incoming_message_callback)
-				_incoming_message_callback(j);
+			if (_incoming_message_callback) _incoming_message_callback(j);
 		}
 	}
 
-	return return_value;
+	return 0;
 }
 
+void TCPConnection::Exit()
+{
+	Thread->WaitForCompletion();
+	_sock->Close();
+	UE_LOG(LogROS, Display, TEXT("[TCP]: Exited"));
+}
+
+void TCPConnection::Stop()
+{
+	running = false;
+	UE_LOG(LogROS, Display, TEXT("[TCP]: Stopped"));
+}
 
 void TCPConnection::RegisterIncomingMessageCallback(std::function<void(json&)> fun)
 {
 	_incoming_message_callback = fun;
-	_callback_function_defined = true;
 }
 
 void TCPConnection::RegisterIncomingMessageCallback(std::function<void(bson_t&)> fun)
 {
 	incoming_message_callback_bson_ = fun;
-	_callback_function_defined = true;
 }
 
 void TCPConnection::RegisterErrorCallback(std::function<void(rosbridge2cpp::TransportError)> fun)
@@ -246,19 +225,17 @@ void TCPConnection::RegisterErrorCallback(std::function<void(rosbridge2cpp::Tran
 
 void TCPConnection::ReportError(rosbridge2cpp::TransportError err)
 {
-	if (_error_callback)
-		_error_callback(err);
+	if (_error_callback) _error_callback(err);
 }
-
 
 void TCPConnection::SetTransportMode(rosbridge2cpp::ITransportLayer::TransportMode mode)
 {
 	switch (mode) {
 	case rosbridge2cpp::ITransportLayer::JSON:
-		bson_only_mode_ = false;
+		bson_mode = false;
 		break;
 	case rosbridge2cpp::ITransportLayer::BSON:
-		bson_only_mode_ = true;
+		bson_mode = true;
 		break;
 	default:
 		UE_LOG(LogROS, Error, TEXT("[TCP]: Given TransportMode not implemented!"));
@@ -267,5 +244,5 @@ void TCPConnection::SetTransportMode(rosbridge2cpp::ITransportLayer::TransportMo
 
 bool TCPConnection::IsHealthy() const
 {
-	return run_receiver_thread;
+	return _sock->GetConnectionState() == ESocketConnectionState::SCS_Connected && running;
 }

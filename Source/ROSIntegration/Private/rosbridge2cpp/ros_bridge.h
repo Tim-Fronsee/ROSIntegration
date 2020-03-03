@@ -2,7 +2,6 @@
 
 #include <iostream>
 #include <string>
-#include <thread>
 #include <functional>
 #include <unordered_map>
 #include <list>
@@ -31,6 +30,9 @@
 #include "messages/rosbridge_unadvertise_service_msg.h"
 #include "messages/rosbridge_unsubscribe_msg.h"
 
+#include "HAL/Runnable.h"
+#include "HAL/RunnableThread.h"
+
 using json = rapidjson::Document;
 
 namespace rosbridge2cpp {
@@ -40,18 +42,18 @@ namespace rosbridge2cpp {
 	 * The library is inspired by [roslibjs](http://wiki.ros.org/roslibjs),
 	 * which is a feature-rich client-side implementation of the rosbridge protocol in java script.
 	 */
-	class ROSBridge {
+	class ROSBridge : public FRunnable {
 
 	public:
-		ROSBridge(ITransportLayer &transport) : transport_layer_(transport) {}
-
-		ROSBridge(ITransportLayer &transport, bool bson_only_mode) : transport_layer_(transport), bson_only_mode_(bson_only_mode) {}
+		ROSBridge(ITransportLayer &transport);
+		ROSBridge(ITransportLayer &transport, bool bson_only_mode);
 
 		~ROSBridge();
 
-		// Init the underlying transport layer and everything thats required
-		// to initialized in this class.
-		bool Init(std::string ip_addr, int port);
+		// FRunnable
+		virtual uint32 Run() override;
+		virtual void Exit() override;
+		virtual void Stop() override;
 
 		bool IsHealthy() const;
 
@@ -100,13 +102,13 @@ namespace rosbridge2cpp {
 
 		// Returns true if the bson only mode is activated
 		bool bson_only_mode() {
-			return bson_only_mode_;
+			return bson_mode;
 		}
 
 		// Enable the BSON only mode.
 		// All communications with the rosbridge server
 		// will be in BSON, instead of JSON
-		void enable_bson_mode() { bson_only_mode_ = true; }
+		void enable_bson_mode() { bson_mode = true; }
 
 	private:
 		// Callback function for the used ITransportLayer.
@@ -134,18 +136,13 @@ namespace rosbridge2cpp {
 		std::unordered_map<std::string, FunVrROSServiceResponseMsg> registered_service_callbacks_;
 		std::unordered_map<std::string, FunVrROSCallServiceMsgrROSServiceResponseMsgrAllocator> registered_service_request_callbacks_;
 		std::unordered_map<std::string, FunVrROSCallServiceMsgrROSServiceResponseMsg> registered_service_request_callbacks_bson_;
-		bool bson_only_mode_ = false;
+		bool bson_mode, running;
 
-		spinlock transport_layer_access_mutex_;
-
-		spinlock change_topics_mutex_;
-
-		std::thread publisher_queue_thread_;
-		spinlock change_publisher_queues_mutex_;
+		FRunnableThread * Thread;
+		spinlock queue_mutex, topics_mutex, transport_mutex;
 		std::unordered_map<std::string, int> publisher_topics_; // points to index in publisher_queues_
 		std::vector<std::queue<bson_t*>> publisher_queues_;	 // data to publish on the queue thread
 		int current_publisher_queue_ = 0;
-		bool run_publisher_queue_thread_ = true;
 		std::chrono::system_clock::time_point LastDataSendTime; // watchdog for send thread. Socket sometimes blocks infinitely.
 	};
 }
