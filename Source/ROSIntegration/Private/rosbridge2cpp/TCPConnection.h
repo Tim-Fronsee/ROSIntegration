@@ -2,6 +2,8 @@
 
 #include <functional> // std::function
 #include <iostream>
+#include <utility>
+#include <vector>
 
 #include <CoreMinimal.h>
 #include "HAL/Runnable.h"
@@ -35,7 +37,7 @@ public:
 
 	bool IsHealthy() const;
 	bool SendMessage(std::string data);
-	bool SendMessage(const uint8_t *data, unsigned int length);
+	bool SendMessage(const uint8_t *data, int32 length);
 	int ReceiverThreadFunction(TSharedRef<FInternetAddr> addr);
 	void RegisterIncomingMessageCallback(std::function<void(json&)> fun);
 	void RegisterIncomingMessageCallback(std::function<void(bson_t&)> fun);
@@ -51,4 +53,6 @@ private:
 	std::function<void(json&)> _incoming_message_callback;
 	std::function<void(bson_t&)> incoming_message_callback_bson_;
 	std::function<void(rosbridge2cpp::TransportError)> _error_callback;
+
+	std::vector<std::pair<const uint8_t *, int32>> queue_messages;
 };

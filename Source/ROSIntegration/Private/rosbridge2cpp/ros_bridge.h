@@ -129,8 +129,6 @@ namespace rosbridge2cpp {
 		// Handler Method for reply packet
 		void HandleIncomingServiceRequestMessage(ROSBridgeCallServiceMsg &data);
 
-		int RunPublisherQueueThread();
-
 		ITransportLayer &transport_layer_;
 		std::unordered_map<std::string, std::list<ROSCallbackHandle<FunVrROSPublishMsg>>> registered_topic_callbacks_;
 		std::unordered_map<std::string, FunVrROSServiceResponseMsg> registered_service_callbacks_;
@@ -143,6 +141,5 @@ namespace rosbridge2cpp {
 		std::unordered_map<std::string, int> publisher_topics_; // points to index in publisher_queues_
 		std::vector<std::queue<bson_t*>> publisher_queues_;	 // data to publish on the queue thread
 		int current_publisher_queue_ = 0;
-		std::chrono::system_clock::time_point LastDataSendTime; // watchdog for send thread. Socket sometimes blocks infinitely.
 	};
 }

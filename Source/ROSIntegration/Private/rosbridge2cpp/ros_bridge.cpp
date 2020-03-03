@@ -42,12 +42,12 @@ namespace rosbridge2cpp {
 			}
 		}
 		delete Thread;
+		UE_LOG(LogROS, Warning, TEXT("[ROSBridge]: Destroyed"));
 	}
 
 	uint32 ROSBridge::Run()
 	{
-		int num_retries = 10;
-		float sleep_duration = 0.2f;
+		int num_retries = 3;
 
 		while (running)
 		{
@@ -57,19 +57,15 @@ namespace rosbridge2cpp {
 				UE_LOG(LogROS, Warning, TEXT("[ROSBridge]: Lost connection to ROSBridge!"));
 				return 1;
 			}
+
+			// Don't try to send to an unhealthy transport layer or we may deadlock.
 			if (!transport_layer_.IsHealthy()) {
+				UE_LOG(LogROS, Display,
+					TEXT("[ROSBridge]: Waiting for Connection...%d"), num_retries);
 				num_retries--;
-				LastDataSendTime = std::chrono::system_clock::now();
-				FPlatformProcess::Sleep(0.2f);
-				UE_LOG(LogROS, Warning, TEXT("[ROSBridge]: Sleeping..."));
-				// If we call SendMessage while the transport layer is unhealthy,
-				// we may deadlock (i.e. during a long Connect).
-				// Thus, we continue here after sleeping briefly to check again.
+				FPlatformProcess::Sleep(1);
 				continue;
 			}
-
-			LastDataSendTime = std::chrono::system_clock::now();
-			FPlatformProcess::Sleep(sleep_duration);
 
 			bson_t* msg;
 			spinlock::scoped_lock_wait_for_short_task queue_lock(queue_mutex);
@@ -79,13 +75,8 @@ namespace rosbridge2cpp {
 				current_publisher_queue_ = 0;
 				// Enforce sleep once every topic was handled to allow
 				// synchronous ROSBridge calls (e.g. Subscribe, Advertise).
-				sleep_duration = 0.01f;
 
-				if (publisher_queues_.size() == 0)
-				{
-					sleep_duration = 0.1f;
-					continue;
-				}
+				if (publisher_queues_.size() == 0) continue;
 			}
 			auto& queue = publisher_queues_[current_publisher_queue_];
 			if (queue.size())
@@ -100,12 +91,8 @@ namespace rosbridge2cpp {
 			spinlock::scoped_lock_wait_for_short_task lock(transport_mutex);
 			const bool success = transport_layer_.SendMessage(bson_data, bson_size);
 			bson_destroy(msg);
-			if (!success)
-			{
-				num_retries--;
-				sleep_duration = 0.2f;
-			}
-			else num_retries = 10;
+			// if (!success) num_retries--;
+			// else num_retries = 10;
 		}
 
 		return 0;
@@ -113,6 +100,7 @@ namespace rosbridge2cpp {
 
 	void ROSBridge::Exit()
 	{
+		running = false;
 		Thread->WaitForCompletion();
 		UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Exited"));
 	}
@@ -133,7 +121,8 @@ namespace rosbridge2cpp {
 		if (bson_only_mode()) {
 			// going from JSON to BSON
 			std::string str_repr = Helper::get_string_from_rapidjson(data);
-			std::cout << "[ROSBridge] serializing from JSON to BSON for: " << str_repr << std::endl;
+			UE_LOG(LogROS, Display,
+				TEXT("[ROSBridge] serializing from JSON to BSON for: %s"), *FString(str_repr.c_str()));
 
 			bson_t bson;
 			bson_error_t error;
