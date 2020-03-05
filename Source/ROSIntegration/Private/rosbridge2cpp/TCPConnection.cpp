@@ -32,27 +32,21 @@ bool TCPConnection::SendMessage(const uint8_t *data, int32 length)
 {
 	if (IsHealthy())
 	{
-		// int32 bytes_sent = 0;
-		// unsigned int total_bytes_to_send = length;
-		// int32 num_tries = 0;
-		// while (total_bytes_to_send > 0 && num_tries < 3)
-		// {
-		// 	bool SendResult = 0;
-		// 	SendResult = _sock->Send(data, total_bytes_to_send, bytes_sent);
-		//
-		// 	if (SendResult) data += bytes_sent;
-		// 	else ++num_tries;
-		//
-		// 	total_bytes_to_send -= bytes_sent;
-		// }
-		//
-		// return total_bytes_to_send == 0;
-		// int32 bytes = 0;
-		// bool result = _sock->Send(data, length, bytes);
-		// if (bytes < length) UE_LOG(LogROS, Warning, TEXT("[TCP]: Sent %d of %d bytes."), bytes, length);
-		// return result;
-		queue_messages.push_back(std::pair<const uint8_t *, int32>(data, length));
-		return true;
+		int32 bytes_sent = 0;
+		unsigned int total_bytes_to_send = length;
+		int32 num_tries = 0;
+		while (total_bytes_to_send > 0 && num_tries < 3)
+		{
+			bool SendResult = 0;
+			SendResult = _sock->Send(data, total_bytes_to_send, bytes_sent);
+
+			if (SendResult) data += bytes_sent;
+			else ++num_tries;
+
+			total_bytes_to_send -= bytes_sent;
+		}
+
+		return total_bytes_to_send == 0;
 	}
 	return false;
 }
@@ -197,7 +191,6 @@ uint32 TCPConnection::Run()
 void TCPConnection::Exit()
 {
 	running = false;
-	Thread->WaitForCompletion();
 	_sock->Close();
 	UE_LOG(LogROS, Display, TEXT("[TCP]: Exited"));
 }
