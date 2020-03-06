@@ -30,6 +30,7 @@
 #include "messages/rosbridge_unadvertise_service_msg.h"
 #include "messages/rosbridge_unsubscribe_msg.h"
 
+#include "Containers/Queue.h"
 #include "HAL/Runnable.h"
 #include "HAL/RunnableThread.h"
 
@@ -138,8 +139,8 @@ namespace rosbridge2cpp {
 
 		FRunnableThread * Thread;
 		spinlock queue_mutex, topics_mutex, transport_mutex;
-		std::unordered_map<std::string, int> publisher_topics_; // points to index in publisher_queues_
-		std::vector<std::queue<bson_t*>> publisher_queues_;	 // data to publish on the queue thread
-		int current_publisher_queue_ = 0;
+
+		// Thread safe UE4 Queue
+		TQueue<bson_t*, EQueueMode::Mpsc> messages;
 	};
 }

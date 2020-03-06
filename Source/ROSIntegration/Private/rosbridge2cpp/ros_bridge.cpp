@@ -33,21 +33,13 @@ namespace rosbridge2cpp {
 
 	ROSBridge::~ROSBridge()
 	{
-		for (auto& queue : publisher_queues_)
-		{
-			while (queue.size())
-			{
-				bson_destroy(queue.front());
-				queue.pop();
-			}
-		}
 		delete Thread;
 		UE_LOG(LogROS, Warning, TEXT("[ROSBridge]: Destroyed"));
 	}
 
 	uint32 ROSBridge::Run()
 	{
-		int num_retries = 3;
+		int num_retries = 5;
 
 		while (running)
 		{
@@ -67,32 +59,19 @@ namespace rosbridge2cpp {
 				continue;
 			}
 
-			bson_t* msg;
-			spinlock::scoped_lock_wait_for_short_task queue_lock(queue_mutex);
-			current_publisher_queue_++;
-			if (current_publisher_queue_ >= publisher_queues_.size())
+			if (!messages.IsEmpty() && messages.Peek() != nullptr)
 			{
-				current_publisher_queue_ = 0;
-				// Enforce sleep once every topic was handled to allow
-				// synchronous ROSBridge calls (e.g. Subscribe, Advertise).
+				bson_t* msg;
+				messages.Dequeue(msg);
 
-				if (publisher_queues_.size() == 0) continue;
+				const uint8_t* bson_data = bson_get_data(msg);
+				uint32_t bson_size = msg->len;
+				// spinlock::scoped_lock_wait_for_long_task lock(transport_mutex);
+				if (!transport_layer_.SendMessage(bson_data, bson_size)) num_retries--;
+				else num_retries = 5;
+				bson_destroy(msg);
 			}
-			auto& queue = publisher_queues_[current_publisher_queue_];
-			if (queue.size())
-			{
-				msg = queue.front();
-				queue.pop();
-			}
-			else continue;
-
-			const uint8_t* bson_data = bson_get_data(msg);
-			uint32_t bson_size = msg->len;
-			spinlock::scoped_lock_wait_for_short_task lock(transport_mutex);
-			const bool success = transport_layer_.SendMessage(bson_data, bson_size);
-			bson_destroy(msg);
-			// if (!success) num_retries--;
-			// else num_retries = 10;
+			else FPlatformProcess::Sleep(0.01);
 		}
 
 		return 0;
@@ -173,25 +152,13 @@ namespace rosbridge2cpp {
 
 		if (!running)	return false;
 
+		// Convert to BSON.
 		bson_t* message = bson_new();
 		bson_init(message);
 		msg.ToBSON(*message);
 
-		spinlock::scoped_lock_wait_for_short_task lock(queue_mutex);
-		if (publisher_topics_.find(topic_name) == publisher_topics_.end())
-		{
-			publisher_topics_[topic_name] = publisher_queues_.size();
-			publisher_queues_.push_back(std::queue<bson_t*>());
-		}
-
-		auto& queue = publisher_queues_[publisher_topics_[topic_name]];
-		if (queue_size > 0 && queue.size() >= queue_size) // make space if necessary
-		{
-			bson_destroy(queue.front());
-			queue.pop();
-		}
-
-		queue.push(message);
+		// Place message on the queue.
+		messages.Enqueue(message);
 
 		return true;
 	}
