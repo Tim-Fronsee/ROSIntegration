@@ -137,10 +137,12 @@ namespace rosbridge2cpp {
 		std::unordered_map<std::string, FunVrROSCallServiceMsgrROSServiceResponseMsg> registered_service_request_callbacks_bson_;
 		bool bson_mode, running;
 
+		// UE4 Thread Safe vars
 		FRunnableThread * Thread;
-		spinlock queue_mutex, topics_mutex, transport_mutex;
-
-		// Thread safe UE4 Queue
+		FCriticalSection QueueMutex, TopicsMutex, TransportMutex;
 		TQueue<bson_t*, EQueueMode::Mpsc> messages;
+
+		uint32 _queue_max = 1024;
+		uint32 _queue_size;
 	};
 }

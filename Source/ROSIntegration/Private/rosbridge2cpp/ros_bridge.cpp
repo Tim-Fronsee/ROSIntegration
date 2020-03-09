@@ -3,6 +3,8 @@
 #include "ros_topic.h"
 #include <bson.h>
 
+#include "Misc/ScopeTryLock.h"
+
 namespace rosbridge2cpp {
 
 	static const std::chrono::seconds SendThreadFreezeTimeout = std::chrono::seconds(5);
@@ -34,7 +36,6 @@ namespace rosbridge2cpp {
 	ROSBridge::~ROSBridge()
 	{
 		delete Thread;
-		UE_LOG(LogROS, Warning, TEXT("[ROSBridge]: Destroyed"));
 	}
 
 	uint32 ROSBridge::Run()
@@ -59,14 +60,16 @@ namespace rosbridge2cpp {
 				continue;
 			}
 
+			FScopeTryLock QueueTryLock(&QueueMutex);
 			if (!messages.IsEmpty() && messages.Peek() != nullptr)
 			{
 				bson_t* msg;
 				messages.Dequeue(msg);
+				_queue_size--;
 
 				const uint8_t* bson_data = bson_get_data(msg);
 				uint32_t bson_size = msg->len;
-				// spinlock::scoped_lock_wait_for_long_task lock(transport_mutex);
+				FScopeTryLock TransportTryLock(&TransportMutex);
 				if (!transport_layer_.SendMessage(bson_data, bson_size)) num_retries--;
 				else num_retries = 5;
 				bson_destroy(msg);
@@ -91,7 +94,7 @@ namespace rosbridge2cpp {
 	}
 
 	bool ROSBridge::SendMessage(std::string data) {
-		spinlock::scoped_lock_wait_for_short_task lock(transport_mutex);
+		FScopeTryLock ScopeLock(&TransportMutex);
 		return transport_layer_.SendMessage(data);
 	}
 
@@ -112,7 +115,7 @@ namespace rosbridge2cpp {
 			}
 			const uint8_t *bson_data = bson_get_data(&bson);
 			uint32_t bson_size = bson.len;
-			spinlock::scoped_lock_wait_for_short_task lock(transport_mutex);
+			FScopeTryLock ScopeLock(&TransportMutex);
 			bool retval = transport_layer_.SendMessage(bson_data, bson_size);
 			bson_destroy(&bson);
 			return retval;
@@ -131,7 +134,7 @@ namespace rosbridge2cpp {
 
 			const uint8_t *bson_data = bson_get_data(&message);
 			uint32_t bson_size = message.len;
-			spinlock::scoped_lock_wait_for_short_task lock(transport_mutex);
+			FScopeTryLock ScopeLock(&TransportMutex);
 			bool retval = transport_layer_.SendMessage(bson_data, bson_size);
 			bson_destroy(&message); // TODO needed?
 			return retval;
@@ -152,20 +155,25 @@ namespace rosbridge2cpp {
 
 		if (!running)	return false;
 
-		// Convert to BSON.
-		bson_t* message = bson_new();
-		bson_init(message);
-		msg.ToBSON(*message);
+		FScopeTryLock ScopeTryLock(&QueueMutex);
+		if (_queue_size <= _queue_max)
+		{
+			// Convert to BSON.
+			bson_t* message = bson_new();
+			bson_init(message);
+			msg.ToBSON(*message);
 
-		// Place message on the queue.
-		messages.Enqueue(message);
-
+			// Place message on the queue.
+			messages.Enqueue(message);
+			_queue_size++;
+		}
+		else UE_LOG(LogROS, Warning, TEXT("[ROSBridge]: Maximum Messages Enqueued."));
 		return true;
 	}
 
 	void ROSBridge::HandleIncomingPublishMessage(ROSBridgePublishMsg &data)
 	{
-		spinlock::scoped_lock_wait_for_short_task lock(topics_mutex);
+		FScopeTryLock ScopeLock(&TopicsMutex);
 
 		// Incoming topic message - dispatch to correct callback
 		std::string &incoming_topic_name = data.topic_;
@@ -320,7 +328,7 @@ namespace rosbridge2cpp {
 
 	void ROSBridge::RegisterTopicCallback(std::string topic_name, ROSCallbackHandle<FunVrROSPublishMsg>& callback_handle)
 	{
-		spinlock::scoped_lock_wait_for_short_task lock(topics_mutex);
+		FScopeTryLock ScopeLock(&TopicsMutex);
 		registered_topic_callbacks_[topic_name].push_back(callback_handle);
 	}
 
@@ -341,7 +349,7 @@ namespace rosbridge2cpp {
 
 	bool ROSBridge::UnregisterTopicCallback(std::string topic_name, const ROSCallbackHandle<FunVrROSPublishMsg>& callback_handle)
 	{
-		spinlock::scoped_lock_wait_for_short_task lock(topics_mutex);
+		FScopeTryLock ScopeLock(&TopicsMutex);
 		if (registered_topic_callbacks_.find(topic_name) == registered_topic_callbacks_.end()) {
 			std::cerr << "[ROSBridge] UnregisterTopicCallback called but given topic name '" << topic_name << "' not in map." << std::endl;
 			return false;
