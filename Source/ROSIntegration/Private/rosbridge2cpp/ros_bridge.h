@@ -70,6 +70,7 @@ namespace rosbridge2cpp {
 
 		bool QueueMessage(const std::string& topic_name, int queue_size, ROSBridgePublishMsg& msg);
 
+		void EmptyQueue();
 
 		// Registration function for topic callbacks.
 		// This method should ONLY be called by ROSTopic instances.

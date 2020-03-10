@@ -35,7 +35,7 @@ namespace rosbridge2cpp {
 
 	ROSBridge::~ROSBridge()
 	{
-		messages.Empty();
+		EmptyQueue();
 		delete Thread;
 	}
 
@@ -69,10 +69,10 @@ namespace rosbridge2cpp {
 
 				const uint8_t* bson_data = bson_get_data(msg);
 				uint32_t bson_size = msg->len;
-				FScopeTryLock TransportTryLock(&TransportMutex);
 				if (!transport_layer_.SendMessage(bson_data, bson_size)) num_retries--;
 				else num_retries = 5;
 				bson_destroy(msg);
+				UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Sent Message"));
 			}
 			else FPlatformProcess::Sleep(0.01);
 		}
@@ -90,13 +90,11 @@ namespace rosbridge2cpp {
 	void ROSBridge::Stop()
 	{
 		running = false;
-		messages.Empty();
-		_queue_size = 0;
+		EmptyQueue();
 		UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Stopped"));
 	}
 
 	bool ROSBridge::SendMessage(std::string data) {
-		FScopeTryLock ScopeLock(&TransportMutex);
 		return transport_layer_.SendMessage(data);
 	}
 
@@ -117,7 +115,6 @@ namespace rosbridge2cpp {
 			}
 			const uint8_t *bson_data = bson_get_data(&bson);
 			uint32_t bson_size = bson.len;
-			FScopeTryLock ScopeLock(&TransportMutex);
 			bool retval = transport_layer_.SendMessage(bson_data, bson_size);
 			bson_destroy(&bson);
 			return retval;
@@ -136,7 +133,6 @@ namespace rosbridge2cpp {
 
 			const uint8_t *bson_data = bson_get_data(&message);
 			uint32_t bson_size = message.len;
-			FScopeTryLock ScopeLock(&TransportMutex);
 			bool retval = transport_layer_.SendMessage(bson_data, bson_size);
 			bson_destroy(&message); // TODO needed?
 			return retval;
@@ -167,10 +163,17 @@ namespace rosbridge2cpp {
 			// Place message on the queue.
 			messages.Enqueue(message);
 			_queue_size++;
+			UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Queued Message"));
 			return true;
 		}
-		else UE_LOG(LogROS, Warning, TEXT("[ROSBridge]: Maximum Messages Enqueued."));
+		else UE_LOG(LogROS, Warning, TEXT("[ROSBridge]: Message Queue Full, Skipping..."));
 		return false;
+	}
+
+	void ROSBridge::EmptyQueue()
+	{
+		messages.Empty();
+		_queue_size = 0;
 	}
 
 	void ROSBridge::HandleIncomingPublishMessage(ROSBridgePublishMsg &data)
