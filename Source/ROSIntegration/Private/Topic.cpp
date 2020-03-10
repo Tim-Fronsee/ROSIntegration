@@ -264,6 +264,11 @@ bool UTopic::IsAdvertising()
 	return _State.Advertised;
 }
 
+bool UTopic::IsSubscribed()
+{
+	return _State.Subscribed;
+}
+
 FString UTopic::GetDetailedInfoInternal() const
 {
 	return _Implementation->_Topic;

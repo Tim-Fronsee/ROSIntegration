@@ -46,8 +46,10 @@ public:
 
 	void MarkAsDisconnected();
 	bool Reconnect(UROSIntegrationCore* ROSIntegrationCore);
-	
+
 	bool IsAdvertising();
+	
+	bool IsSubscribed();
 
 protected:
 
