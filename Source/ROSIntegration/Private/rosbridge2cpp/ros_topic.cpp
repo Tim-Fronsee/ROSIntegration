@@ -24,6 +24,7 @@ namespace rosbridge2cpp {
 			if (!ros_.SendMessage(cmd))
 			{
 				subscribe_id_ = "";
+				UE_LOG(LogROS, Warning, TEXT("[ROSTopic] Subscription failed, setting id to empty string."));
 			}
 		}
 
@@ -47,7 +48,7 @@ namespace rosbridge2cpp {
 
 		if (!ros_.UnregisterTopicCallback(topic_name_, callback_handle)) { // Unregister callback in ROSBridge
 			// failed to unregister callback - maybe the method is different from already registered callbacks
-			std::cerr << "[ROSTopic] Passed unknown callback to ROSTopic::unsubscribe. This callback is not registered in the ROSBridge instance. Aborting..." << std::endl;
+			UE_LOG(LogROS, Error, TEXT("[ROSTopic] Passed unknown callback to ROSTopic::unsubscribe. This callback is not registered in the ROSBridge instance. Aborting..."));
 			return false;
 		}
 
@@ -56,7 +57,8 @@ namespace rosbridge2cpp {
 		if (subscription_counter_ > 0)
 			return true;
 
-		std::cout << "[ROSTopic] No callbacks registered anymore - unsubscribe from topic" << std::endl;
+		UE_LOG(LogROS, Warning, TEXT("[ROSTopic] No callbacks registered anymore - unsubscribe from topic"));
+
 		// Handle unsubscription when no callback is registered anymore
 		//rapidjson::Document cmd;
 		//cmd.SetObject();
