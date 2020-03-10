@@ -143,6 +143,6 @@ namespace rosbridge2cpp {
 		TQueue<bson_t*, EQueueMode::Mpsc> messages;
 
 		uint32 _queue_max = 1024;
-		uint32 _queue_size;
+		uint32 _queue_size = 0;
 	};
 }

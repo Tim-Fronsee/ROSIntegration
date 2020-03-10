@@ -35,6 +35,7 @@ namespace rosbridge2cpp {
 
 	ROSBridge::~ROSBridge()
 	{
+		messages.Empty();
 		delete Thread;
 	}
 
@@ -60,7 +61,6 @@ namespace rosbridge2cpp {
 				continue;
 			}
 
-			FScopeTryLock QueueTryLock(&QueueMutex);
 			if (!messages.IsEmpty() && messages.Peek() != nullptr)
 			{
 				bson_t* msg;
@@ -90,6 +90,8 @@ namespace rosbridge2cpp {
 	void ROSBridge::Stop()
 	{
 		running = false;
+		messages.Empty();
+		_queue_size = 0;
 		UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Stopped"));
 	}
 
@@ -155,7 +157,6 @@ namespace rosbridge2cpp {
 
 		if (!running)	return false;
 
-		FScopeTryLock ScopeTryLock(&QueueMutex);
 		if (_queue_size <= _queue_max)
 		{
 			// Convert to BSON.
@@ -166,9 +167,10 @@ namespace rosbridge2cpp {
 			// Place message on the queue.
 			messages.Enqueue(message);
 			_queue_size++;
+			return true;
 		}
 		else UE_LOG(LogROS, Warning, TEXT("[ROSBridge]: Maximum Messages Enqueued."));
-		return true;
+		return false;
 	}
 
 	void ROSBridge::HandleIncomingPublishMessage(ROSBridgePublishMsg &data)
