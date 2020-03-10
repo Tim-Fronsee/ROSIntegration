@@ -35,7 +35,6 @@ namespace rosbridge2cpp {
 
 	ROSBridge::~ROSBridge()
 	{
-		EmptyQueue();
 		delete Thread;
 	}
 
@@ -61,20 +60,24 @@ namespace rosbridge2cpp {
 				continue;
 			}
 
-			if (!messages.IsEmpty() && messages.Peek() != nullptr)
+			// Cycle through each queue so every topic has a chance to publish.
+			if (current_queue < publisher_queues.Num())
 			{
-				bson_t* msg;
-				messages.Dequeue(msg);
-				_queue_size--;
+				auto& queue = publisher_queues[current_queue];
+				if (!queue->IsEmpty() && queue->Peek() != nullptr)
+				{
+					bson_t* msg;
+					queue->Dequeue(msg);
 
-				const uint8_t* bson_data = bson_get_data(msg);
-				uint32_t bson_size = msg->len;
-				if (!transport_layer_.SendMessage(bson_data, bson_size)) num_retries--;
-				else num_retries = 5;
-				bson_destroy(msg);
-				UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Sent Message"));
+					const uint8_t* bson_data = bson_get_data(msg);
+					uint32_t bson_size = msg->len;
+					if (!transport_layer_.SendMessage(bson_data, bson_size)) num_retries--;
+					else num_retries = 5;
+					bson_destroy(msg);
+				}
+				current_queue++;
 			}
-			else FPlatformProcess::Sleep(0.01);
+			else current_queue = 0;
 		}
 
 		return 0;
@@ -90,7 +93,6 @@ namespace rosbridge2cpp {
 	void ROSBridge::Stop()
 	{
 		running = false;
-		EmptyQueue();
 		UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Stopped"));
 	}
 
@@ -153,7 +155,13 @@ namespace rosbridge2cpp {
 
 		if (!running)	return false;
 
-		if (_queue_size <= _queue_max)
+		if (!publisher_topics.Find(FString(topic_name.c_str())))
+		{
+			publisher_topics.Add(FString(topic_name.c_str()), publisher_queues.Num());
+			publisher_queues.Add(new TCircularQueue<bson_t*>(queue_size));
+		}
+		auto& queue = publisher_queues[publisher_topics[FString(topic_name.c_str())]];
+		if (!queue->IsFull())
 		{
 			// Convert to BSON.
 			bson_t* message = bson_new();
@@ -161,19 +169,11 @@ namespace rosbridge2cpp {
 			msg.ToBSON(*message);
 
 			// Place message on the queue.
-			messages.Enqueue(message);
-			_queue_size++;
-			UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Queued Message"));
+			queue->Enqueue(message);
 			return true;
 		}
 		else UE_LOG(LogROS, Warning, TEXT("[ROSBridge]: Message Queue Full, Skipping..."));
 		return false;
-	}
-
-	void ROSBridge::EmptyQueue()
-	{
-		messages.Empty();
-		_queue_size = 0;
 	}
 
 	void ROSBridge::HandleIncomingPublishMessage(ROSBridgePublishMsg &data)

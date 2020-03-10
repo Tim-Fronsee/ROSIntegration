@@ -13,6 +13,8 @@ _ip_addr(ip_addr), _port(port), bson_mode(bson_only), running(true)
 {
 	_sock = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->CreateSocket(
 		NAME_Stream, TEXT("Rosbridge TCP client"), false);
+	_sock->SetNoDelay(true);
+	_sock->SetReuseAddr(true);
 	Thread = FRunnableThread::Create(this, TEXT("TCP Thread"), 0, TPri_BelowNormal);
 }
 
@@ -32,21 +34,11 @@ bool TCPConnection::SendMessage(const uint8_t *data, int32 length)
 {
 	if (IsHealthy())
 	{
-		int32 bytes_sent = 0;
-		unsigned int total_bytes_to_send = length;
-		int32 num_tries = 0;
-		while (total_bytes_to_send > 0 && num_tries < 3)
-		{
-			bool SendResult = 0;
-			SendResult = _sock->Send(data, total_bytes_to_send, bytes_sent);
-
-			if (SendResult) data += bytes_sent;
-			else ++num_tries;
-
-			total_bytes_to_send -= bytes_sent;
-		}
-
-		return total_bytes_to_send == 0;
+		int32 sent = 0;
+		bool result = _sock->Send(data, length, sent);
+		if (sent != length) UE_LOG(LogROS, Warning,
+				TEXT("[TCP]: Incomplete packet sent; %d of %d bytes."), sent, length);
+		return result;
 	}
 	return false;
 }

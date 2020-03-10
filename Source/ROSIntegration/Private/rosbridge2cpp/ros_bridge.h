@@ -30,7 +30,7 @@
 #include "messages/rosbridge_unadvertise_service_msg.h"
 #include "messages/rosbridge_unsubscribe_msg.h"
 
-#include "Containers/Queue.h"
+#include "Containers/CircularQueue.h"
 #include "HAL/Runnable.h"
 #include "HAL/RunnableThread.h"
 
@@ -69,8 +69,6 @@ namespace rosbridge2cpp {
 		bool SendMessage(ROSBridgeMsg &msg);
 
 		bool QueueMessage(const std::string& topic_name, int queue_size, ROSBridgePublishMsg& msg);
-
-		void EmptyQueue();
 
 		// Registration function for topic callbacks.
 		// This method should ONLY be called by ROSTopic instances.
@@ -141,9 +139,9 @@ namespace rosbridge2cpp {
 		// UE4 Thread Safe vars
 		FRunnableThread * Thread;
 		FCriticalSection QueueMutex, TopicsMutex, TransportMutex;
-		TQueue<bson_t*, EQueueMode::Mpsc> messages;
+		TArray<TCircularQueue<bson_t*>*> publisher_queues;
+		TMap<FString, int> publisher_topics;
 
-		uint32 _queue_max = 1024;
-		uint32 _queue_size = 0;
+		int current_queue = 0;
 	};
 }
