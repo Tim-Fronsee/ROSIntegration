@@ -36,6 +36,27 @@ namespace rosbridge2cpp {
 	ROSBridge::~ROSBridge()
 	{
 		delete Thread;
+		Thread = NULL;
+		FScopeTryLock QueueLock(&QueueMutex);
+		for (int i = 0; i < publisher_queues.Num(); i++)
+		{
+			auto queue = publisher_queues[i];
+			while (!queue->IsEmpty())
+			{
+				bson_t * msg;
+				queue->Dequeue(msg);
+				bson_destroy(msg);
+			}
+			publisher_queues.RemoveAt(i);
+		}
+		FScopeTryLock TopicLock(&TopicsMutex);
+		publisher_topics.Empty(publisher_topics.Num());
+		FScopeTryLock CallbackLock(&CallbackMutex);
+		registered_topic_callbacks_.clear();
+		registered_service_callbacks_.clear();
+		registered_service_request_callbacks_.clear();
+		registered_service_request_callbacks_bson_.clear();
+		UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Deleted"));
 	}
 
 	uint32 ROSBridge::Run()
@@ -61,6 +82,7 @@ namespace rosbridge2cpp {
 			}
 
 			// Cycle through each queue so every topic has a chance to publish.
+			FScopeTryLock ScopeLock(&QueueMutex);
 			if (current_queue < publisher_queues.Num())
 			{
 				auto& queue = publisher_queues[current_queue];
@@ -86,14 +108,14 @@ namespace rosbridge2cpp {
 	void ROSBridge::Exit()
 	{
 		running = false;
-		Thread->WaitForCompletion();
 		UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Exited"));
 	}
 
 	void ROSBridge::Stop()
 	{
+		UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Stopping"));
 		running = false;
-		UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Stopped"));
+		Thread->WaitForCompletion();
 	}
 
 	bool ROSBridge::SendMessage(std::string data) {
@@ -153,32 +175,36 @@ namespace rosbridge2cpp {
 	{
 		assert(bson_mode); // queueing is not supported for json data
 
-		if (!running)	return false;
-
+		FScopeTryLock TopicsLock(&TopicsMutex);
 		if (!publisher_topics.Find(FString(topic_name.c_str())))
 		{
 			publisher_topics.Add(FString(topic_name.c_str()), publisher_queues.Num());
 			publisher_queues.Add(new TCircularQueue<bson_t*>(queue_size));
+			UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Allocated new queue."));
 		}
+		FScopeTryLock QueueLock(&QueueMutex);
 		auto& queue = publisher_queues[publisher_topics[FString(topic_name.c_str())]];
-		if (!queue->IsFull())
+		if (queue->IsFull())
 		{
-			// Convert to BSON.
-			bson_t* message = bson_new();
-			bson_init(message);
-			msg.ToBSON(*message);
-
-			// Place message on the queue.
-			queue->Enqueue(message);
-			return true;
+			bson_t* message;
+			queue->Dequeue(message);
+			bson_destroy(message);
+			UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Queue Full Destroyed message."));
 		}
-		else UE_LOG(LogROS, Warning, TEXT("[ROSBridge]: Message Queue Full, Skipping..."));
-		return false;
+		// Create BSON message.
+		bson_t* message = bson_new();
+		bson_init(message);
+		msg.ToBSON(*message);
+
+		// Place message on the queue.
+		queue->Enqueue(message);
+		UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Queue Size %d"), queue->Count());
+		return true;
 	}
 
 	void ROSBridge::HandleIncomingPublishMessage(ROSBridgePublishMsg &data)
 	{
-		FScopeTryLock ScopeLock(&TopicsMutex);
+		FScopeTryLock ScopeLock(&CallbackMutex);
 
 		// Incoming topic message - dispatch to correct callback
 		std::string &incoming_topic_name = data.topic_;
@@ -204,7 +230,6 @@ namespace rosbridge2cpp {
 		for (auto& topic_callback : registered_topic_callbacks_.find(incoming_topic_name)->second) {
 			topic_callback.GetFunction()(data);
 		}
-		return;
 	}
 
 	void ROSBridge::HandleIncomingServiceResponseMessage(ROSBridgeServiceResponseMsg &data)
@@ -224,7 +249,6 @@ namespace rosbridge2cpp {
 		// Delete the callback.
 		// Every call_service will create a new id
 		registered_service_callbacks_.erase(service_response_callback_it);
-
 	}
 
 	void ROSBridge::HandleIncomingServiceRequestMessage(ROSBridgeCallServiceMsg &data)
@@ -333,7 +357,7 @@ namespace rosbridge2cpp {
 
 	void ROSBridge::RegisterTopicCallback(std::string topic_name, ROSCallbackHandle<FunVrROSPublishMsg>& callback_handle)
 	{
-		FScopeTryLock ScopeLock(&TopicsMutex);
+		FScopeTryLock ScopeLock(&CallbackMutex);
 		registered_topic_callbacks_[topic_name].push_back(callback_handle);
 	}
 
@@ -354,7 +378,7 @@ namespace rosbridge2cpp {
 
 	bool ROSBridge::UnregisterTopicCallback(std::string topic_name, const ROSCallbackHandle<FunVrROSPublishMsg>& callback_handle)
 	{
-		FScopeTryLock ScopeLock(&TopicsMutex);
+		FScopeTryLock ScopeLock(&CallbackMutex);
 		if (registered_topic_callbacks_.find(topic_name) == registered_topic_callbacks_.end()) {
 			std::cerr << "[ROSBridge] UnregisterTopicCallback called but given topic name '" << topic_name << "' not in map." << std::endl;
 			return false;

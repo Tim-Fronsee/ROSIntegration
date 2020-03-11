@@ -20,7 +20,6 @@ public:
 	}
 
 	~Impl() {
-		if (_Callback) Unsubscribe();
 		if(_ROSTopic) delete _ROSTopic;
 	}
 
@@ -139,6 +138,7 @@ public:
 		}
 		_Converter = *Converter;
 
+		if (_ROSTopic) delete _ROSTopic;
 		_ROSTopic = new rosbridge2cpp::ROSTopic(Ros, TCHAR_TO_UTF8(*Topic), TCHAR_TO_UTF8(*MessageType), QueueSize);
 	}
 
@@ -193,38 +193,61 @@ void UTopic::BeginDestroy() {
 
 bool UTopic::Subscribe(std::function<void(TSharedPtr<FROSBaseMsg>)> func)
 {
-	_State.Subscribed = true;
-	return _State.Connected && _Implementation->Subscribe(func);
+	_State.Subscribed = _State.Connected &&
+											_ROSIntegrationCore &&
+											_ROSIntegrationCore->_Ros->IsHealthy() &&
+											_Implementation->Subscribe(func);
+	return _State.Subscribed;
 }
 
 bool UTopic::Unsubscribe()
 {
 	_State.Subscribed = false;
-	return _State.Connected && _Implementation && _Implementation->Unsubscribe();
+	return _State.Connected &&
+ 			   _ROSIntegrationCore &&
+			   _ROSIntegrationCore->_Ros->IsHealthy() &&
+			   _Implementation &&
+			   _Implementation->Unsubscribe();
 }
 
 bool UTopic::Advertise()
 {
-	_State.Advertised = true;
-	return _State.Connected && _Implementation->Advertise();
+	_State.Advertised = _State.Connected &&
+										  _ROSIntegrationCore &&
+										  _ROSIntegrationCore->_Ros->IsHealthy() &&
+										  _Implementation->Advertise();
+	return _State.Advertised;
 }
 
 bool UTopic::Unadvertise()
 {
 	_State.Advertised = false;
-	return _State.Connected && _Implementation->Unadvertise();
+	return _State.Connected &&
+				 _ROSIntegrationCore &&
+				 _ROSIntegrationCore->_Ros->IsHealthy() &&
+				 _Implementation->Unadvertise();
 }
 
 bool UTopic::Publish(TSharedPtr<FROSBaseMsg> msg)
 {
-	return _State.Connected && _State.Advertised && _Implementation->Publish(msg);
+	return _State.Connected &&
+				 _State.Advertised &&
+				 _ROSIntegrationCore &&
+				 _ROSIntegrationCore->_Ros->IsHealthy() &&
+				 _Implementation->Publish(msg);
 }
 
 void UTopic::Init(UROSIntegrationCore *Ric, FString Topic, FString MessageType, int32 QueueSize)
 {
-	_ROSIntegrationCore = Ric;
-	_Implementation->Init(*Ric->_Ros, Topic, MessageType, QueueSize);
-	_State.Connected = true;
+	if (_State.Advertised) Unadvertise();
+	if (_State.Subscribed) Unsubscribe();
+	if (Ric->_Ros)
+	{
+		_ROSIntegrationCore = Ric;
+		_Implementation->Init(*Ric->_Ros, Topic, MessageType, QueueSize);
+		_State.Connected = true;
+	}
+	else UE_LOG(LogROS, Warning, TEXT("[Topic]: Internal ROS Bridge is null, topic not initialized."));
 }
 
 void UTopic::MarkAsDisconnected()

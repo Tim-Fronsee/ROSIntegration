@@ -160,6 +160,9 @@ namespace rosbridge2cpp {
 	{
 		if (!is_advertised_) {
 			if (!Advertise()) {
+				// Destroy the message since it won't be GCed by UE4.
+				UE_LOG(LogROS, Warning, TEXT("[ROSTopic]: Destroying BSON; not advertising."));
+				bson_destroy(message);
 				return false;
 			}
 		}

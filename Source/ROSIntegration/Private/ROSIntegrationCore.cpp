@@ -29,8 +29,18 @@ void UROSIntegrationCore::Init(FString ROSBridgeHost, int32 ROSBridgePort, bool 
 
 void UROSIntegrationCore::Stop()
 {
-	if (_Ros) _Ros->Stop();
-	if (_Connection) _Connection->Stop();
+	if (_Ros != NULL)
+	{
+		_Ros->Stop();
+		delete _Ros;
+		_Ros = NULL;
+	}
+	if (_Connection != NULL)
+	{
+		_Connection->Stop();
+		delete _Connection;
+		_Connection = NULL;
+	}
 }
 
 bool UROSIntegrationCore::IsHealthy() const

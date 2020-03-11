@@ -138,7 +138,7 @@ namespace rosbridge2cpp {
 
 		// UE4 Thread Safe vars
 		FRunnableThread * Thread;
-		FCriticalSection QueueMutex, TopicsMutex, TransportMutex;
+		FCriticalSection CallbackMutex, QueueMutex, TopicsMutex, TransportMutex;
 		TArray<TCircularQueue<bson_t*>*> publisher_queues;
 		TMap<FString, int> publisher_topics;
 

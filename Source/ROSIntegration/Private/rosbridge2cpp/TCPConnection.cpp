@@ -20,8 +20,11 @@ _ip_addr(ip_addr), _port(port), bson_mode(bson_only), running(true)
 
 TCPConnection::~TCPConnection()
 {
+	_sock->Close();
 	ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(_sock);
 	delete Thread;
+	Thread = NULL;
+	UE_LOG(LogROS, Display, TEXT("[TCP]: Deleted"));
 }
 
 bool TCPConnection::SendMessage(std::string data)
@@ -78,73 +81,70 @@ uint32 TCPConnection::Run()
 			return 3;
 		}
 
-		// TX - Needs to be inside of Run otherwise our Send messages may block
-		// depending on network infrastructure.
-		// TODO
-
-		// RX
-		if (bson_mode)
-		{
-			if (bson_state_read_length)
+		// Only try to receive when there is actual data, otherwise the thread
+		// may hang indefinitely.
+		uint32 count = 0;
+		while (_sock->HasPendingData(count) && count > 0) {
+			if (bson_mode)
 			{
-				bson_msg_length_read = 0;
-				binary_buffer.SetNumUninitialized(4, false);
-				int32 bytes_read = 0;
-				if (_sock->Recv(binary_buffer.GetData(), 4, bytes_read) && bytes_read > 0)
+				if (bson_state_read_length)
 				{
-					bson_msg_length_read += bytes_read;
-					if (bytes_read == 4) {
-#if PLATFORM_LITTLE_ENDIAN
-						bson_msg_length = (
-							binary_buffer.GetData()[3] << 24 |
-							binary_buffer.GetData()[2] << 16 |
-							binary_buffer.GetData()[1] << 8 |
-							binary_buffer.GetData()[0]
-						);
-#else
-						bson_msg_length = *((uint32_t*)&binary_buffer[0]);
-#endif
-						// Indicate the message retrieval mode
-						bson_state_read_length = false;
-						binary_buffer.SetNumUninitialized(bson_msg_length, false);
+					bson_msg_length_read = 0;
+					binary_buffer.SetNumUninitialized(4, false);
+					int32 bytes_read = 0;
+					if (_sock->Recv(binary_buffer.GetData(), 4, bytes_read) && bytes_read > 0)
+					{
+						bson_msg_length_read += bytes_read;
+						if (bytes_read == 4) {
+	#if PLATFORM_LITTLE_ENDIAN
+							bson_msg_length = (
+								binary_buffer.GetData()[3] << 24 |
+								binary_buffer.GetData()[2] << 16 |
+								binary_buffer.GetData()[1] << 8 |
+								binary_buffer.GetData()[0]
+							);
+	#else
+							bson_msg_length = *((uint32_t*)&binary_buffer[0]);
+	#endif
+							// Indicate the message retrieval mode
+							bson_state_read_length = false;
+							binary_buffer.SetNumUninitialized(bson_msg_length, false);
+						}
+						else UE_LOG(LogROS, Error, TEXT("[TCP]: bytes_read is not 4 in bson_state_read_length==true. It's: %d"), bytes_read);
 					}
-					else UE_LOG(LogROS, Error, TEXT("[TCP]: bytes_read is not 4 in bson_state_read_length==true. It's: %d"), bytes_read);
+					else
+					{
+						UE_LOG(LogROS, Error, TEXT("[TCP]: Failed to recv(); Closing receiver thread."));
+						return 4;
+					}
 				}
+				// Message retrieval mode
 				else
 				{
-					UE_LOG(LogROS, Error, TEXT("[TCP]: Failed to recv(); Closing receiver thread."));
-					return 4;
-				}
-			}
-			// Message retrieval mode
-			else
-			{
-				int32 bytes_read = 0;
-				if (_sock->Recv(binary_buffer.GetData() + bson_msg_length_read,
-												bson_msg_length - bson_msg_length_read,
-												bytes_read) && bytes_read > 0)
-				{
-					bson_msg_length_read += bytes_read;
-					if (bson_msg_length_read == bson_msg_length)
+					int32 bytes_read = 0;
+					if (_sock->Recv(binary_buffer.GetData() + bson_msg_length_read,
+													bson_msg_length - bson_msg_length_read,
+													bytes_read) && bytes_read > 0)
 					{
-						// Full received message!
-						bson_state_read_length = true;
-						bson_t b;
-						if (!bson_init_static(&b, binary_buffer.GetData(), bson_msg_length_read)) {
-							UE_LOG(LogROS, Error, TEXT("[TCP]: Error on BSON parse - Ignoring message"));
-							continue;
+						bson_msg_length_read += bytes_read;
+						if (bson_msg_length_read == bson_msg_length)
+						{
+							// Full received message!
+							bson_state_read_length = true;
+							bson_t b;
+							if (!bson_init_static(&b, binary_buffer.GetData(), bson_msg_length_read)) {
+								UE_LOG(LogROS, Error, TEXT("[TCP]: Error on BSON parse - Ignoring message"));
+								continue;
+							}
+							if (incoming_message_callback_bson_) incoming_message_callback_bson_(b);
 						}
-						if (incoming_message_callback_bson_) incoming_message_callback_bson_(b);
+						else UE_LOG(LogROS, Display, TEXT("[TCP]: Binary buffer num is: %d"), binary_buffer.Num());
 					}
-					else UE_LOG(LogROS, Display, TEXT("[TCP]: Binary buffer num is: %d"), binary_buffer.Num());
+					else UE_LOG(LogROS, Error, TEXT("[TCP]: Failed to recv()"));
 				}
-				else UE_LOG(LogROS, Error, TEXT("[TCP]: Failed to recv()"));
 			}
-		}
-		else {
-			FString result;
-			uint32 count = 0;
-			while (_sock->HasPendingData(count) && count > 0) {
+			else {
+				FString result;
 				FArrayReader data;
 				data.SetNumUninitialized(count);
 
@@ -164,18 +164,19 @@ uint32 TCPConnection::Run()
 
 					delete[] dest;
 				}
-				FPlatformProcess::Sleep(1);
+				if (result.Len() == 0) continue;
+
+				// TODO catch parse error properly
+				// auto j = json::parse(received_data);
+				json j;
+				j.Parse(TCHAR_TO_UTF8(*result));
+
+				if (_incoming_message_callback) _incoming_message_callback(j);
 			}
-			if (result.Len() == 0) continue;
-
-			// TODO catch parse error properly
-			// auto j = json::parse(received_data);
-			json j;
-			j.Parse(TCHAR_TO_UTF8(*result));
-
-			if (_incoming_message_callback) _incoming_message_callback(j);
 		}
 	}
+
+	binary_buffer.Empty();
 
 	return 0;
 }
@@ -183,14 +184,14 @@ uint32 TCPConnection::Run()
 void TCPConnection::Exit()
 {
 	running = false;
-	_sock->Close();
 	UE_LOG(LogROS, Display, TEXT("[TCP]: Exited"));
 }
 
 void TCPConnection::Stop()
 {
+	UE_LOG(LogROS, Display, TEXT("[TCP]: Stopping"));
 	running = false;
-	UE_LOG(LogROS, Display, TEXT("[TCP]: Stopped"));
+	Thread->WaitForCompletion();
 }
 
 void TCPConnection::RegisterIncomingMessageCallback(std::function<void(json&)> fun)
