@@ -24,11 +24,14 @@ using json = rapidjson::Document;
 // Must be a FRunnable to make it multi-threaded.
 class TCPConnection : public FRunnable, public rosbridge2cpp::ITransportLayer {
 public:
-	TCPConnection(FString ip_addr, int port, bool bson_only);
-	~TCPConnection();
+	TCPConnection() {};
+	~TCPConnection() {};
 
 	FString _ip_addr;
 	int _port;
+
+	// Kicks off the FRunnableThread and creates the FSocket.
+	void Start(FString ip_addr, int port, bool bson_only);
 
 	// FRunnable
 	virtual uint32 Run() override;
@@ -46,9 +49,8 @@ public:
 	void SetTransportMode(rosbridge2cpp::ITransportLayer::TransportMode);
 
 private:
-
-	FRunnableThread * Thread;
-	FSocket *_sock;
+	FRunnableThread * Thread = nullptr;
+	FSocket *_sock = nullptr;
 	bool bson_mode, running;
 	std::function<void(json&)> _incoming_message_callback;
 	std::function<void(bson_t&)> incoming_message_callback_bson_;

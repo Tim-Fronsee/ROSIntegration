@@ -8,25 +8,6 @@
 #include <Serialization/ArrayReader.h>
 #include <SocketSubsystem.h>
 
-TCPConnection::TCPConnection(FString ip_addr, int port, bool bson_only) :
-_ip_addr(ip_addr), _port(port), bson_mode(bson_only), running(true)
-{
-	_sock = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->CreateSocket(
-		NAME_Stream, TEXT("Rosbridge TCP client"), false);
-	_sock->SetNoDelay(true);
-	_sock->SetReuseAddr(true);
-	Thread = FRunnableThread::Create(this, TEXT("TCP Thread"), 0, TPri_BelowNormal);
-}
-
-TCPConnection::~TCPConnection()
-{
-	_sock->Close();
-	ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(_sock);
-	delete Thread;
-	Thread = NULL;
-	UE_LOG(LogROS, Display, TEXT("[TCP]: Deleted"));
-}
-
 bool TCPConnection::SendMessage(std::string data)
 {
 	const uint8 *byte_msg = reinterpret_cast<const uint8*>(data.c_str());
@@ -44,6 +25,21 @@ bool TCPConnection::SendMessage(const uint8_t *data, int32 length)
 		return result;
 	}
 	return false;
+}
+
+void TCPConnection::Start(FString ip_addr, int port, bool bson_only)
+{
+	_ip_addr = ip_addr;
+	_port = port;
+	bson_mode = bson_only;
+	running = true;
+	// Must re-create the socket in order to re-attempt the connection...
+	_sock = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->CreateSocket(
+		NAME_Stream, TEXT("Rosbridge TCP client"), false);
+	_sock->SetNoDelay(true);
+	_sock->SetReuseAddr(true);
+	Thread = FRunnableThread::Create(this, TEXT("TCP Thread"), 0, TPri_BelowNormal);
+	UE_LOG(LogROS, Display, TEXT("[TCP]: Started"));
 }
 
 uint32 TCPConnection::Run()
@@ -184,6 +180,12 @@ uint32 TCPConnection::Run()
 void TCPConnection::Exit()
 {
 	running = false;
+	if (_sock)
+	{
+		_sock->Close();
+		ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(_sock);
+		_sock = nullptr;
+	}
 	UE_LOG(LogROS, Display, TEXT("[TCP]: Exited"));
 }
 
@@ -191,7 +193,11 @@ void TCPConnection::Stop()
 {
 	UE_LOG(LogROS, Display, TEXT("[TCP]: Stopping"));
 	running = false;
-	Thread->WaitForCompletion();
+	if (Thread) {
+		Thread->WaitForCompletion();
+		delete Thread;
+		Thread = nullptr;
+	}
 }
 
 void TCPConnection::RegisterIncomingMessageCallback(std::function<void(json&)> fun)
@@ -230,5 +236,7 @@ void TCPConnection::SetTransportMode(rosbridge2cpp::ITransportLayer::TransportMo
 
 bool TCPConnection::IsHealthy() const
 {
-	return _sock->GetConnectionState() == ESocketConnectionState::SCS_Connected && running;
+	return _sock &&
+				 _sock->GetConnectionState() == ESocketConnectionState::SCS_Connected &&
+				 running;
 }

@@ -17,13 +17,14 @@ DEFINE_LOG_CATEGORY(LogROS);
 UROSIntegrationCore::UROSIntegrationCore(const FObjectInitializer& ObjectInitializer)
 : Super(ObjectInitializer)
 {
-	UE_LOG(LogROS, Display, TEXT("UROSIntegrationCore spawned "));
 	_SpawnManager = NewObject<USpawnManager>(USpawnManager::StaticClass());
+	_Connection = new TCPConnection();
+	UE_LOG(LogROS, Display, TEXT("[ROSIntegrationCore]: Spawned"));
 }
 
 void UROSIntegrationCore::Init(FString ROSBridgeHost, int32 ROSBridgePort, bool bson_mode) {
 	Stop();
-	_Connection = new TCPConnection(ROSBridgeHost, ROSBridgePort, bson_mode);
+	_Connection->Start(ROSBridgeHost, ROSBridgePort, bson_mode);
 	_Ros = new rosbridge2cpp::ROSBridge(*_Connection, bson_mode);
 }
 
@@ -35,12 +36,7 @@ void UROSIntegrationCore::Stop()
 		delete _Ros;
 		_Ros = NULL;
 	}
-	if (_Connection != NULL)
-	{
-		_Connection->Stop();
-		delete _Connection;
-		_Connection = NULL;
-	}
+	_Connection->Stop();
 }
 
 bool UROSIntegrationCore::IsHealthy() const
@@ -73,6 +69,7 @@ void UROSIntegrationCore::BeginDestroy()
 {
 	Super::BeginDestroy();
 	Stop();
+	delete _Connection;
 }
 
 void UROSIntegrationCore::SpawnMessageCallback(const ROSBridgePublishMsg& message)
