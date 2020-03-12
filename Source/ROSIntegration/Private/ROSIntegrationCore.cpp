@@ -19,23 +19,19 @@ UROSIntegrationCore::UROSIntegrationCore(const FObjectInitializer& ObjectInitial
 {
 	_SpawnManager = NewObject<USpawnManager>(USpawnManager::StaticClass());
 	_Connection = new TCPConnection();
+	_Ros = new rosbridge2cpp::ROSBridge(*_Connection);
 	UE_LOG(LogROS, Display, TEXT("[ROSIntegrationCore]: Spawned"));
 }
 
 void UROSIntegrationCore::Init(FString ROSBridgeHost, int32 ROSBridgePort, bool bson_mode) {
 	Stop();
 	_Connection->Start(ROSBridgeHost, ROSBridgePort, bson_mode);
-	_Ros = new rosbridge2cpp::ROSBridge(*_Connection, bson_mode);
+	_Ros->Start(bson_mode);
 }
 
 void UROSIntegrationCore::Stop()
 {
-	if (_Ros != NULL)
-	{
-		_Ros->Stop();
-		delete _Ros;
-		_Ros = NULL;
-	}
+	_Ros->Stop();
 	_Connection->Stop();
 }
 
@@ -70,6 +66,7 @@ void UROSIntegrationCore::BeginDestroy()
 	Super::BeginDestroy();
 	Stop();
 	delete _Connection;
+	delete _Ros;
 }
 
 void UROSIntegrationCore::SpawnMessageCallback(const ROSBridgePublishMsg& message)

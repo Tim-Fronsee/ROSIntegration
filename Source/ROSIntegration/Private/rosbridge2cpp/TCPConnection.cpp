@@ -180,12 +180,6 @@ uint32 TCPConnection::Run()
 void TCPConnection::Exit()
 {
 	running = false;
-	if (_sock)
-	{
-		_sock->Close();
-		ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(_sock);
-		_sock = nullptr;
-	}
 	UE_LOG(LogROS, Display, TEXT("[TCP]: Exited"));
 }
 
@@ -197,6 +191,12 @@ void TCPConnection::Stop()
 		Thread->WaitForCompletion();
 		delete Thread;
 		Thread = nullptr;
+	}
+	if (_sock)
+	{
+		_sock->Close();
+		ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(_sock);
+		_sock = nullptr;
 	}
 }
 
@@ -236,7 +236,7 @@ void TCPConnection::SetTransportMode(rosbridge2cpp::ITransportLayer::TransportMo
 
 bool TCPConnection::IsHealthy() const
 {
-	return _sock &&
-				 _sock->GetConnectionState() == ESocketConnectionState::SCS_Connected &&
-				 running;
+	return running &&
+				 _sock &&
+				 _sock->GetConnectionState() == ESocketConnectionState::SCS_Connected;
 }

@@ -5,13 +5,11 @@
 #include <functional>
 #include <unordered_map>
 #include <list>
-#include <queue>
 #include <chrono>
 
 #include <stdio.h>
 #include "types.h"
 #include "helper.h"
-#include "spinlock.h"
 
 #include "itransport_layer.h"
 
@@ -46,10 +44,12 @@ namespace rosbridge2cpp {
 	class ROSBridge : public FRunnable {
 
 	public:
-		ROSBridge(ITransportLayer &transport);
-		ROSBridge(ITransportLayer &transport, bool bson_only_mode);
+		ROSBridge(ITransportLayer &transport) : transport_layer_(transport) {};
 
 		~ROSBridge();
+
+		// Kicks off the FRunnableThread
+		void Start(bool bson_only_mode);
 
 		// FRunnable
 		virtual uint32 Run() override;
@@ -137,7 +137,7 @@ namespace rosbridge2cpp {
 		bool bson_mode, running;
 
 		// UE4 Thread Safe vars
-		FRunnableThread * Thread;
+		FRunnableThread * Thread = nullptr;
 		FCriticalSection CallbackMutex, QueueMutex, TopicsMutex, TransportMutex;
 		TArray<TCircularQueue<bson_t*>*> publisher_queues;
 		TMap<FString, int> publisher_topics;

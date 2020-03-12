@@ -10,33 +10,9 @@ namespace rosbridge2cpp {
 	static const std::chrono::seconds SendThreadFreezeTimeout = std::chrono::seconds(5);
 	unsigned long ROSCallbackHandle_id_counter = 1;
 
-	ROSBridge::ROSBridge(ITransportLayer &transport) : ROSBridge(transport, false)
-	{}
-
-	ROSBridge::ROSBridge(ITransportLayer &transport, bool bson_only_mode) :
-	transport_layer_(transport),
-	bson_mode(bson_only_mode),
-	running(true)
-	{
-		if (bson_mode) {
-			auto fun = [this](bson_t &bson) { IncomingMessageCallback(bson); };
-
-			transport_layer_.SetTransportMode(ITransportLayer::BSON);
-			transport_layer_.RegisterIncomingMessageCallback(fun);
-		}
-		else {
-			// JSON mode
-			auto fun = [this](json &document) { IncomingMessageCallback(document); };
-			transport_layer_.RegisterIncomingMessageCallback(fun);
-		}
-
-		Thread = FRunnableThread::Create(this, TEXT("ROS Bridge Thread"), 0, TPri_BelowNormal);
-	}
-
 	ROSBridge::~ROSBridge()
 	{
-		delete Thread;
-		Thread = NULL;
+		// Clear all queues, maps, and arrays.
 		for (int i = 0; i < publisher_queues.Num(); i++)
 		{
 			auto queue = publisher_queues[i];
@@ -56,6 +32,25 @@ namespace rosbridge2cpp {
 		registered_service_request_callbacks_.clear();
 		registered_service_request_callbacks_bson_.clear();
 		UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Deleted"));
+	}
+
+	void ROSBridge::Start(bool bson_only_mode)
+	{
+		bson_mode = bson_only_mode;
+		if (bson_mode) {
+			auto fun = [this](bson_t &bson) { IncomingMessageCallback(bson); };
+
+			transport_layer_.SetTransportMode(ITransportLayer::BSON);
+			transport_layer_.RegisterIncomingMessageCallback(fun);
+		}
+		else {
+			// JSON mode
+			auto fun = [this](json &document) { IncomingMessageCallback(document); };
+			transport_layer_.RegisterIncomingMessageCallback(fun);
+		}
+		running = true;
+		Thread = FRunnableThread::Create(this, TEXT("ROS Bridge Thread"), 0, TPri_BelowNormal);
+		UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Started"));
 	}
 
 	uint32 ROSBridge::Run()
@@ -106,6 +101,17 @@ namespace rosbridge2cpp {
 	void ROSBridge::Exit()
 	{
 		running = false;
+		// Clear our message queues, but retain the allocated queues & topics.
+		for (int i = 0; i < publisher_queues.Num(); i++)
+		{
+			auto queue = publisher_queues[i];
+			while (!queue->IsEmpty())
+			{
+				bson_t * msg;
+				queue->Dequeue(msg);
+				bson_destroy(msg);
+			}
+		}
 		UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Exited"));
 	}
 
@@ -113,7 +119,12 @@ namespace rosbridge2cpp {
 	{
 		UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Stopping"));
 		running = false;
-		Thread->WaitForCompletion();
+		if (Thread)
+		{
+			Thread->WaitForCompletion();
+			delete Thread;
+			Thread = nullptr;
+		}
 	}
 
 	bool ROSBridge::SendMessage(std::string data) {
@@ -185,7 +196,7 @@ namespace rosbridge2cpp {
 			bson_t* message;
 			queue->Dequeue(message);
 			bson_destroy(message);
-			UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Queue Full Destroyed message."));
+			UE_LOG(LogROS, Verbose, TEXT("[ROSBridge]: %s Queue Full; Destroyed oldest message."), *FString(topic_name.c_str()));
 		}
 		// Create BSON message.
 		bson_t* message = bson_new();
