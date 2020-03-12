@@ -69,8 +69,6 @@ public:
 		if (result) {
 			_Callback = nullptr;
 			_CallbackHandle = rosbridge2cpp::ROSCallbackHandle<rosbridge2cpp::FunVrROSPublishMsg>();
-			if(_ROSTopic) delete _ROSTopic;
-			_ROSTopic = nullptr;
 		}
 		return result;
 	}

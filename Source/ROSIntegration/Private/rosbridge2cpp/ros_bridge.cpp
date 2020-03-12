@@ -101,17 +101,6 @@ namespace rosbridge2cpp {
 	void ROSBridge::Exit()
 	{
 		running = false;
-		// Clear our message queues, but retain the allocated queues & topics.
-		for (int i = 0; i < publisher_queues.Num(); i++)
-		{
-			auto queue = publisher_queues[i];
-			while (!queue->IsEmpty())
-			{
-				bson_t * msg;
-				queue->Dequeue(msg);
-				bson_destroy(msg);
-			}
-		}
 		UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Exited"));
 	}
 
@@ -124,6 +113,17 @@ namespace rosbridge2cpp {
 			Thread->WaitForCompletion();
 			delete Thread;
 			Thread = nullptr;
+		}
+		// Clear our message queues, but retain the allocated queues & topics.
+		for (int i = 0; i < publisher_queues.Num(); i++)
+		{
+			auto queue = publisher_queues[i];
+			while (!queue->IsEmpty())
+			{
+				bson_t * msg;
+				queue->Dequeue(msg);
+				bson_destroy(msg);
+			}
 		}
 	}
 
