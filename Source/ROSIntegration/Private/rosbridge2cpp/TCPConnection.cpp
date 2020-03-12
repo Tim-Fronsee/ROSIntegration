@@ -18,11 +18,20 @@ bool TCPConnection::SendMessage(const uint8_t *data, int32 length)
 {
 	if (IsHealthy())
 	{
-		int32 sent = 0;
-		bool result = _sock->Send(data, length, sent);
-		if (sent != length) UE_LOG(LogROS, Warning,
-				TEXT("[TCP]: Incomplete packet sent; %d of %d bytes."), sent, length);
-		return result;
+		int32 bytes_sent = 0;
+		unsigned int total_bytes_to_send = length;
+		int32 num_tries = 0;
+		while (total_bytes_to_send > 0 && num_tries < 3)
+		{
+			bool SendResult = _sock->Send(data, total_bytes_to_send, bytes_sent);
+
+			if (SendResult) data += bytes_sent;
+			else ++num_tries;
+
+			total_bytes_to_send -= bytes_sent;
+		}
+
+		return total_bytes_to_send == 0;
 	}
 	return false;
 }
