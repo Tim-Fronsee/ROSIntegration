@@ -3,7 +3,7 @@
 #include "ros_topic.h"
 #include <bson.h>
 
-#include "Misc/ScopeTryLock.h"
+#include "Misc/ScopeLock.h"
 
 namespace rosbridge2cpp {
 
@@ -13,20 +13,23 @@ namespace rosbridge2cpp {
 	ROSBridge::~ROSBridge()
 	{
 		// Clear all queues, maps, and arrays.
-		for (int i = 0; i < publisher_queues.Num(); i++)
 		{
-			auto queue = publisher_queues[i];
-			while (!queue->IsEmpty())
+			FScopeLock QueueLock(&QueueMutex);
+			for (int i = 0; i < publisher_queues.Num(); i++)
 			{
-				bson_t * msg;
-				queue->Dequeue(msg);
-				bson_destroy(msg);
+				auto queue = publisher_queues[i];
+				while (!queue->IsEmpty())
+				{
+					bson_t * msg;
+					queue->Dequeue(msg);
+					bson_destroy(msg);
+				}
+				delete publisher_queues[i];
+				publisher_queues.Pop(true);
 			}
-			delete publisher_queues[i];
-			publisher_queues.Pop(true);
+			publisher_queues.Empty();
+			publisher_topics.Empty();
 		}
-		publisher_queues.Empty();
-		publisher_topics.Empty();
 		registered_topic_callbacks_.clear();
 		registered_service_callbacks_.clear();
 		registered_service_request_callbacks_.clear();
@@ -79,7 +82,7 @@ namespace rosbridge2cpp {
 			if (current_queue < publisher_queues.Num())
 			{
 				auto& queue = publisher_queues[current_queue];
-				if (!queue->IsEmpty() && queue->Peek() != nullptr)
+				if (queue && !queue->IsEmpty() && queue->Peek() != nullptr)
 				{
 					bson_t* msg;
 					queue->Dequeue(msg);
@@ -115,14 +118,17 @@ namespace rosbridge2cpp {
 			Thread = nullptr;
 		}
 		// Clear our message queues, but retain the allocated queues & topics.
-		for (int i = 0; i < publisher_queues.Num(); i++)
 		{
-			auto queue = publisher_queues[i];
-			while (!queue->IsEmpty())
+			FScopeLock QueueLock(&QueueMutex);
+			for (int i = 0; i < publisher_queues.Num(); i++)
 			{
-				bson_t * msg;
-				queue->Dequeue(msg);
-				bson_destroy(msg);
+				auto queue = publisher_queues[i];
+				while (!queue->IsEmpty())
+				{
+					bson_t * msg;
+					queue->Dequeue(msg);
+					bson_destroy(msg);
+				}
 			}
 		}
 	}
@@ -183,28 +189,30 @@ namespace rosbridge2cpp {
 	bool ROSBridge::QueueMessage(const std::string& topic_name, int queue_size, ROSBridgePublishMsg& msg)
 	{
 		assert(bson_mode); // queueing is not supported for json data
-
-		if (!publisher_topics.Find(FString(topic_name.c_str())))
 		{
-			publisher_topics.Emplace(FString(topic_name.c_str()), publisher_queues.Num());
-			publisher_queues.Emplace(new TCircularQueue<bson_t*>(queue_size));
-			UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Allocated new queue."));
-		}
-		auto& queue = publisher_queues[publisher_topics[FString(topic_name.c_str())]];
-		if (queue->IsFull())
-		{
-			bson_t* message;
-			queue->Dequeue(message);
-			bson_destroy(message);
-			UE_LOG(LogROS, Verbose, TEXT("[ROSBridge]: %s Queue Full; Destroyed oldest message."), *FString(topic_name.c_str()));
-		}
-		// Create BSON message.
-		bson_t* message = bson_new();
-		bson_init(message);
-		msg.ToBSON(*message);
+			FScopeLock QueueLock(&QueueMutex);
+			if (!publisher_topics.Find(FString(topic_name.c_str())))
+			{
+				publisher_topics.Emplace(FString(topic_name.c_str()), publisher_queues.Num());
+				publisher_queues.Emplace(new TCircularQueue<bson_t*>(queue_size));
+				UE_LOG(LogROS, Display, TEXT("[ROSBridge]: Allocated new queue."));
+			}
+			auto& queue = publisher_queues[publisher_topics[FString(topic_name.c_str())]];
+			if (queue->IsFull())
+			{
+				bson_t* message;
+				queue->Dequeue(message);
+				bson_destroy(message);
+				UE_LOG(LogROS, Verbose, TEXT("[ROSBridge]: %s Queue Full; Destroyed oldest message."), *FString(topic_name.c_str()));
+			}
+			// Create BSON message.
+			bson_t* message = bson_new();
+			bson_init(message);
+			msg.ToBSON(*message);
 
-		// Place message on the queue.
-		queue->Enqueue(message);
+			// Place message on the queue.
+			queue->Enqueue(message);
+		}
 		return true;
 	}
 
