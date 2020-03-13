@@ -191,8 +191,7 @@ void UTopic::BeginDestroy() {
 
 bool UTopic::Subscribe(std::function<void(TSharedPtr<FROSBaseMsg>)> func)
 {
-	_State.Subscribed = _State.Connected &&
-											_ROSIntegrationCore &&
+	_State.Subscribed = _ROSIntegrationCore &&
 											_ROSIntegrationCore->_Ros->IsHealthy() &&
 											_Implementation->Subscribe(func);
 	return _State.Subscribed;
@@ -201,8 +200,7 @@ bool UTopic::Subscribe(std::function<void(TSharedPtr<FROSBaseMsg>)> func)
 bool UTopic::Unsubscribe()
 {
 	_State.Subscribed = false;
-	return _State.Connected &&
- 			   _ROSIntegrationCore &&
+	return _ROSIntegrationCore &&
 			   _ROSIntegrationCore->_Ros->IsHealthy() &&
 			   _Implementation &&
 			   _Implementation->Unsubscribe();
