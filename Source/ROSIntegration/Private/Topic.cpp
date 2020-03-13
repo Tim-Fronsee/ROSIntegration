@@ -210,8 +210,7 @@ bool UTopic::Unsubscribe()
 
 bool UTopic::Advertise()
 {
-	_State.Advertised = _State.Connected &&
-										  _ROSIntegrationCore &&
+	_State.Advertised = _ROSIntegrationCore &&
 										  _ROSIntegrationCore->_Ros->IsHealthy() &&
 										  _Implementation->Advertise();
 	return _State.Advertised;
@@ -220,16 +219,14 @@ bool UTopic::Advertise()
 bool UTopic::Unadvertise()
 {
 	_State.Advertised = false;
-	return _State.Connected &&
-				 _ROSIntegrationCore &&
+	return _ROSIntegrationCore &&
 				 _ROSIntegrationCore->_Ros->IsHealthy() &&
 				 _Implementation->Unadvertise();
 }
 
 bool UTopic::Publish(TSharedPtr<FROSBaseMsg> msg)
 {
-	return _State.Connected &&
-				 _State.Advertised &&
+	return _State.Advertised &&
 				 _ROSIntegrationCore &&
 				 _ROSIntegrationCore->_Ros->IsHealthy() &&
 				 _Implementation->Publish(msg);
