@@ -78,24 +78,32 @@ namespace rosbridge2cpp {
 				continue;
 			}
 
-			// Cycle through each queue so every topic has a chance to publish.
-			if (current_queue < publisher_queues.Num())
-			{
-				auto& queue = publisher_queues[current_queue];
-				if (queue && !queue->IsEmpty() && queue->Peek() != nullptr)
-				{
-					bson_t* msg;
-					queue->Dequeue(msg);
 
-					const uint8_t* bson_data = bson_get_data(msg);
-					uint32_t bson_size = msg->len;
-					if (!transport_layer_.SendMessage(bson_data, bson_size)) num_retries--;
-					else num_retries = 5;
-					bson_destroy(msg);
+			bson_t* msg = nullptr;
+
+			// Cycle through each queue so every topic has a chance to publish.
+			{
+				FScopeLock QueueLock(&QueueMutex);
+				if (current_queue < publisher_queues.Num())
+				{
+					auto& queue = publisher_queues[current_queue];
+					if (queue && !queue->IsEmpty() && queue->Peek() != nullptr)
+					{
+						queue->Dequeue(msg);
+					}
+					current_queue++;
 				}
-				current_queue++;
+				else current_queue = 0;
 			}
-			else current_queue = 0;
+
+			if (msg)
+			{
+				const uint8_t* bson_data = bson_get_data(msg);
+				uint32_t bson_size = msg->len;
+				if (!transport_layer_.SendMessage(bson_data, bson_size)) num_retries--;
+				else num_retries = 5;
+				bson_destroy(msg);
+			}
 		}
 
 		return 0;
