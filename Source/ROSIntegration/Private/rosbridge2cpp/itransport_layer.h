@@ -16,7 +16,7 @@ namespace rosbridge2cpp {
 		enum TransportMode { JSON, BSON };
 
 		// Status of the transport layer's socket connection & rx thread.
-		virtual bool IsHealthy() const;
+		virtual bool IsHealthy() const = 0;
 
 		// Send a string over the underlying transport mechanism to the rosbridge server
 		virtual bool SendMessage(std::string data) = 0;
